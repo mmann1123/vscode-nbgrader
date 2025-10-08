@@ -9,6 +9,7 @@
     "email": "mmann1123@gwu.edu"
   },
   "license": "BSD-3-Clause",
+  "icon": "static/icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/mmann1123/vscode-nbgrader"
