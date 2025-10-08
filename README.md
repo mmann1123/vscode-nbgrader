@@ -18,9 +18,11 @@ Create and manage [nbgrader](https://nbgrader.readthedocs.io/) assignments direc
 
 ## Usage
 
-<video controls src="static/nbgrader.mp4" title="nbgrader demo"></video>
+<p>
+<iframe width="560" height="315" src="https://www.youtube.com/embed/UzEGw33DbiA" title="nbgrader demo" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+</p>
 
-
+[Watch the demo on YouTube](https://youtu.be/UzEGw33DbiA)
 ### Setting Cell Types
 
 1. Open a Jupyter notebook in VS Code
