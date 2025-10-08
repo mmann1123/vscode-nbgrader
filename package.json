@@ -1,0 +1,91 @@
+{
+  "name": "vscode-nbgrader",
+  "displayName": "nbgrader for VS Code",
+  "description": "Create and manage nbgrader assignments in VS Code",
+  "version": "0.1.0",
+  "publisher": "mmann1123",
+  "author": {
+    "name": "Michael Mann",
+    "email": "mmann1123@gwu.edu"
+  },
+  "license": "BSD-3-Clause",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mmann1123/vscode-nbgrader"
+  },
+  "bugs": {
+    "url": "https://github.com/mmann1123/vscode-nbgrader/issues"
+  },
+  "homepage": "https://github.com/mmann1123/vscode-nbgrader#readme",
+  "keywords": [
+    "jupyter",
+    "notebook",
+    "nbgrader",
+    "education",
+    "grading",
+    "teaching",
+    "assignments"
+  ],
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Education",
+    "Notebooks"
+  ],
+  "activationEvents": [
+    "onNotebook:jupyter-notebook"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "nbgrader.setCellType",
+        "title": "Set Cell Type",
+        "category": "nbgrader",
+        "icon": "$(tag)"
+      },
+      {
+        "command": "nbgrader.clearCellMetadata",
+        "title": "Clear Cell Metadata",
+        "category": "nbgrader"
+      },
+      {
+        "command": "nbgrader.debugMetadata",
+        "title": "Debug: Show Cell Metadata",
+        "category": "nbgrader"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "nbgrader.setCellType",
+        "key": "ctrl+shift+g",
+        "mac": "cmd+shift+g",
+        "when": "notebookEditorFocused"
+      }
+    ],
+    "menus": {
+      "notebook/cell/title": [
+        {
+          "command": "nbgrader.setCellType",
+          "group": "inline@1",
+          "when": "notebookType == 'jupyter-notebook'"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.75.0",
+    "@types/node": "^18.x",
+    "@typescript-eslint/eslint-plugin": "^5.0.0",
+    "@typescript-eslint/parser": "^5.0.0",
+    "eslint": "^8.0.0",
+    "typescript": "^5.0.0"
+  }
+}

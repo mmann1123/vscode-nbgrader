@@ -1,0 +1,9 @@
+out
+node_modules
+.vscode-test/
+*.vsix
+.DS_Store
+ARCHITECTURE.md
+CHECKLIST.md
+.gitignore
+PUBLISHING.md

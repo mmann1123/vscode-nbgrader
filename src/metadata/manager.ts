@@ -1,0 +1,269 @@
+/**
+ * Core metadata management for nbgrader cells
+ * Based on nbgrader/src/create_assignment/create_assignment_model.ts
+ */
+
+import * as vscode from 'vscode';
+import {
+  NbgraderData,
+  CellType,
+  NBGRADER_KEY,
+  NBGRADER_SCHEMA_VERSION,
+  isGradableType
+} from './types';
+import { generateGradeId } from '../utils/uuid';
+
+/**
+ * Get nbgrader metadata from a cell
+ * Tries nbgrader field first, then falls back to tags (workaround for VS Code)
+ */
+export function getNbgraderData(cell: vscode.NotebookCell): NbgraderData | null {
+  // Try direct nbgrader metadata first
+  let metadata = cell.metadata?.[NBGRADER_KEY];
+  if (metadata) {
+    return metadata as NbgraderData;
+  }
+
+  // Fallback: try to restore from tags (workaround for VS Code stripping metadata)
+  const tags = cell.metadata?.tags as string[] | undefined;
+  if (tags) {
+    const nbgraderTag = tags.find(t => t.startsWith('nbgrader:'));
+    if (nbgraderTag) {
+      try {
+        const encoded = nbgraderTag.substring('nbgrader:'.length);
+        const decoded = Buffer.from(encoded, 'base64').toString('utf8');
+        metadata = JSON.parse(decoded);
+        console.log('[nbgrader] Restored metadata from tag:', metadata);
+        return metadata as NbgraderData;
+      } catch (error) {
+        console.error('[nbgrader] Failed to decode tag:', error);
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Get or create a grade_id for a cell
+ */
+export function getOrCreateGradeId(cell: vscode.NotebookCell): string {
+  const existing = getNbgraderData(cell);
+  if (existing?.grade_id) {
+    return existing.grade_id;
+  }
+  return generateGradeId();
+}
+
+/**
+ * Create nbgrader metadata for a given cell type
+ * Matches the logic from nbgrader's create_assignment_model.ts
+ */
+export function createNbgraderMetadata(
+  type: CellType,
+  points: number,
+  gradeId: string
+): NbgraderData | null {
+  if (type === '') {
+    return null; // Remove metadata
+  }
+
+  const base: NbgraderData = {
+    schema_version: NBGRADER_SCHEMA_VERSION,
+    grade_id: gradeId
+  };
+
+  switch (type) {
+    case 'manual':
+      // Manually graded answer
+      return {
+        ...base,
+        grade: true,
+        solution: true,
+        locked: false,
+        points
+      };
+
+    case 'task':
+      // Manually graded task
+      return {
+        ...base,
+        task: true,
+        points
+      };
+
+    case 'solution':
+      // Autograded answer (student writes code)
+      return {
+        ...base,
+        solution: true,
+        grade: false,
+        locked: false
+      };
+
+    case 'tests':
+      // Autograded tests (locked test cells)
+      return {
+        ...base,
+        grade: true,
+        solution: false,
+        locked: true,
+        points
+      };
+
+    case 'readonly':
+      // Read-only cell
+      return {
+        ...base,
+        locked: true
+      };
+
+    default:
+      return null;
+  }
+}
+
+/**
+ * Update cell metadata with nbgrader data
+ */
+export async function updateCellMetadata(
+  cell: vscode.NotebookCell,
+  nbgraderData: NbgraderData | null
+): Promise<boolean> {
+  try {
+    const edit = new vscode.WorkspaceEdit();
+    const notebook = cell.notebook;
+
+    // Merge with existing metadata (preserve other keys)
+    const newMetadata = { ...cell.metadata };
+
+    if (nbgraderData === null) {
+      // Remove nbgrader metadata
+      delete newMetadata[NBGRADER_KEY];
+      // Also remove from tags
+      if (newMetadata.tags) {
+        newMetadata.tags = (newMetadata.tags as string[]).filter(t => !t.startsWith('nbgrader:'));
+      }
+    } else {
+      // Set nbgrader metadata
+      // Ensure all fields are JSON-serializable primitives
+      const cleanData: any = {
+        schema_version: nbgraderData.schema_version,
+        grade_id: nbgraderData.grade_id
+      };
+
+      // Only include defined fields
+      if (nbgraderData.grade !== undefined) cleanData.grade = nbgraderData.grade;
+      if (nbgraderData.solution !== undefined) cleanData.solution = nbgraderData.solution;
+      if (nbgraderData.locked !== undefined) cleanData.locked = nbgraderData.locked;
+      if (nbgraderData.task !== undefined) cleanData.task = nbgraderData.task;
+      if (nbgraderData.points !== undefined) cleanData.points = nbgraderData.points;
+
+      newMetadata[NBGRADER_KEY] = cleanData;
+
+      // ALSO store as a tag (VS Code preserves tags)
+      // This is a workaround for VS Code stripping nbgrader metadata
+      if (!newMetadata.tags) {
+        newMetadata.tags = [];
+      }
+      const tags = newMetadata.tags as string[];
+      // Remove existing nbgrader tag
+      const filteredTags = tags.filter(t => !t.startsWith('nbgrader:'));
+      // Add new tag with encoded metadata
+      filteredTags.push(`nbgrader:${Buffer.from(JSON.stringify(cleanData)).toString('base64')}`);
+      newMetadata.tags = filteredTags;
+    }
+
+    edit.set(notebook.uri, [
+      vscode.NotebookEdit.updateCellMetadata(cell.index, newMetadata)
+    ]);
+
+    const success = await vscode.workspace.applyEdit(edit);
+
+    // Force document to be marked as dirty
+    if (success) {
+      // Small delay to ensure edit is processed
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      // Verify the metadata was set
+      const verification = cell.metadata?.[NBGRADER_KEY];
+      console.log('Metadata verification:', verification ? 'PRESENT' : 'MISSING');
+      if (!verification) {
+        console.error('WARNING: Metadata not found after update!');
+        return false;
+      }
+    }
+
+    return success;
+  } catch (error) {
+    console.error('Failed to update cell metadata:', error);
+    return false;
+  }
+}
+
+/**
+ * Get the cell type from nbgrader metadata
+ */
+export function getCellType(data: NbgraderData | null, isCodeCell: boolean): CellType {
+  if (!data) {
+    return '';
+  }
+
+  // Task type
+  if (data.task) {
+    return 'task';
+  }
+
+  // Manually graded answer
+  if (data.solution && data.grade) {
+    return 'manual';
+  }
+
+  // Autograded answer (code only)
+  if (data.solution && !data.grade && isCodeCell) {
+    return 'solution';
+  }
+
+  // Autograded tests (code only)
+  if (data.grade && !data.solution && isCodeCell) {
+    return 'tests';
+  }
+
+  // Read-only
+  if (data.locked && !data.solution && !data.grade && !data.task) {
+    return 'readonly';
+  }
+
+  return '';
+}
+
+/**
+ * Get human-readable description of cell type
+ */
+export function getCellTypeDescription(cell: vscode.NotebookCell): string {
+  const data = getNbgraderData(cell);
+  const isCode = cell.kind === vscode.NotebookCellKind.Code;
+  const type = getCellType(data, isCode);
+
+  if (type === '') {
+    return 'Not graded';
+  }
+
+  const labels: Record<CellType, string> = {
+    '': 'Not graded',
+    'manual': 'Manually graded answer',
+    'task': 'Manually graded task',
+    'solution': 'Autograded answer',
+    'tests': 'Autograded tests',
+    'readonly': 'Read-only'
+  };
+
+  let desc = labels[type];
+
+  // Add points if gradable
+  if (isGradableType(type) && data?.points !== undefined) {
+    desc += ` (${data.points} pts)`;
+  }
+
+  return desc;
+}
