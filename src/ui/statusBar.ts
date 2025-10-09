@@ -7,6 +7,16 @@ import { getNbgraderData, getCellType } from '../metadata/manager';
 import { CELL_TYPE_LABELS, isGradableType } from '../metadata/types';
 
 export class NbgraderStatusBarProvider implements vscode.NotebookCellStatusBarItemProvider {
+  private _onDidChangeNotebookCellStatusBarItems = new vscode.EventEmitter<void>();
+  onDidChangeNotebookCellStatusBarItems = this._onDidChangeNotebookCellStatusBarItems.event;
+
+  /**
+   * Trigger a refresh of all status bar items
+   */
+  refresh(): void {
+    this._onDidChangeNotebookCellStatusBarItems.fire();
+  }
+
   /**
    * Provide status bar items for a cell
    */

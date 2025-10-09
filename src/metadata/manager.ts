@@ -14,20 +14,45 @@ import {
 import { generateGradeId } from '../utils/uuid';
 
 /**
+ * Check if we should use custom metadata wrapper
+ * VS Code's ipynb serializer behavior changed - newer versions don't drop custom metadata
+ */
+function useCustomMetadata(): boolean {
+  const ipynbExt = vscode.extensions.getExtension('vscode.ipynb');
+  if (ipynbExt?.exports?.dropCustomMetadata !== undefined) {
+    return !ipynbExt.exports.dropCustomMetadata;
+  }
+  return true; // Default to using custom for newer VS Code
+}
+
+/**
  * Get nbgrader metadata from a cell
- * Tries nbgrader field first, then falls back to tags (workaround for VS Code)
+ * Checks both custom.metadata.nbgrader and metadata.nbgrader paths
  */
 export function getNbgraderData(cell: vscode.NotebookCell): NbgraderData | null {
-  // Try direct nbgrader metadata first
-  let metadata = cell.metadata?.[NBGRADER_KEY];
+  let metadata: any = null;
+
+  // Try the appropriate metadata path based on VS Code version
+  if (useCustomMetadata()) {
+    metadata = (cell.metadata as any).custom?.metadata?.[NBGRADER_KEY];
+  } else {
+    metadata = (cell.metadata as any).metadata?.[NBGRADER_KEY];
+  }
+
   if (metadata) {
     return metadata as NbgraderData;
   }
 
-  // Fallback: try to restore from tags (workaround for VS Code stripping metadata)
-  const tags = cell.metadata?.tags as string[] | undefined;
+  // Fallback: try direct nbgrader metadata (older approach)
+  metadata = cell.metadata?.[NBGRADER_KEY];
+  if (metadata) {
+    return metadata as NbgraderData;
+  }
+
+  // Last fallback: try to restore from tags (backup mechanism)
+  const tags = (cell.metadata as any).custom?.metadata?.tags || (cell.metadata as any).metadata?.tags || cell.metadata?.tags as string[] | undefined;
   if (tags) {
-    const nbgraderTag = tags.find(t => t.startsWith('nbgrader:'));
+    const nbgraderTag = tags.find((t: string) => t.startsWith('nbgrader:'));
     if (nbgraderTag) {
       try {
         const encoded = nbgraderTag.substring('nbgrader:'.length);
@@ -125,6 +150,7 @@ export function createNbgraderMetadata(
 
 /**
  * Update cell metadata with nbgrader data
+ * Uses custom.metadata.nbgrader or metadata.nbgrader based on VS Code version
  */
 export async function updateCellMetadata(
   cell: vscode.NotebookCell,
@@ -134,64 +160,55 @@ export async function updateCellMetadata(
     const edit = new vscode.WorkspaceEdit();
     const notebook = cell.notebook;
 
-    // Merge with existing metadata (preserve other keys)
-    const newMetadata = { ...cell.metadata };
+    // Deep clone existing metadata to preserve other keys
+    const newMetadata = JSON.parse(JSON.stringify(cell.metadata));
 
-    if (nbgraderData === null) {
-      // Remove nbgrader metadata
-      delete newMetadata[NBGRADER_KEY];
-      // Also remove from tags
-      if (newMetadata.tags) {
-        newMetadata.tags = (newMetadata.tags as string[]).filter(t => !t.startsWith('nbgrader:'));
-      }
-    } else {
-      // Set nbgrader metadata
-      // Ensure all fields are JSON-serializable primitives
-      const cleanData: any = {
-        schema_version: nbgraderData.schema_version,
-        grade_id: nbgraderData.grade_id
-      };
+    // Ensure all fields are JSON-serializable primitives
+    const cleanData: any = nbgraderData ? {
+      schema_version: nbgraderData.schema_version,
+      grade_id: nbgraderData.grade_id
+    } : null;
 
+    if (nbgraderData) {
       // Only include defined fields
       if (nbgraderData.grade !== undefined) cleanData.grade = nbgraderData.grade;
       if (nbgraderData.solution !== undefined) cleanData.solution = nbgraderData.solution;
       if (nbgraderData.locked !== undefined) cleanData.locked = nbgraderData.locked;
       if (nbgraderData.task !== undefined) cleanData.task = nbgraderData.task;
       if (nbgraderData.points !== undefined) cleanData.points = nbgraderData.points;
-
-      newMetadata[NBGRADER_KEY] = cleanData;
-
-      // ALSO store as a tag (VS Code preserves tags)
-      // This is a workaround for VS Code stripping nbgrader metadata
-      if (!newMetadata.tags) {
-        newMetadata.tags = [];
-      }
-      const tags = newMetadata.tags as string[];
-      // Remove existing nbgrader tag
-      const filteredTags = tags.filter(t => !t.startsWith('nbgrader:'));
-      // Add new tag with encoded metadata
-      filteredTags.push(`nbgrader:${Buffer.from(JSON.stringify(cleanData)).toString('base64')}`);
-      newMetadata.tags = filteredTags;
     }
 
+    // Set metadata using the appropriate path
+    if (useCustomMetadata()) {
+      newMetadata.custom = newMetadata.custom || {};
+      newMetadata.custom.metadata = newMetadata.custom.metadata || {};
+
+      if (nbgraderData === null) {
+        delete newMetadata.custom.metadata[NBGRADER_KEY];
+      } else {
+        newMetadata.custom.metadata[NBGRADER_KEY] = cleanData;
+      }
+    } else {
+      newMetadata.metadata = newMetadata.metadata || {};
+
+      if (nbgraderData === null) {
+        delete newMetadata.metadata[NBGRADER_KEY];
+      } else {
+        newMetadata.metadata[NBGRADER_KEY] = cleanData;
+      }
+    }
+
+    // Sort keys alphabetically to minimize SCM changes (matching Jupyter behavior)
+    const sortedMetadata = sortObjectPropertiesRecursively(newMetadata);
+
     edit.set(notebook.uri, [
-      vscode.NotebookEdit.updateCellMetadata(cell.index, newMetadata)
+      vscode.NotebookEdit.updateCellMetadata(cell.index, sortedMetadata)
     ]);
 
     const success = await vscode.workspace.applyEdit(edit);
 
-    // Force document to be marked as dirty
     if (success) {
-      // Small delay to ensure edit is processed
-      await new Promise(resolve => setTimeout(resolve, 50));
-
-      // Verify the metadata was set
-      const verification = cell.metadata?.[NBGRADER_KEY];
-      console.log('Metadata verification:', verification ? 'PRESENT' : 'MISSING');
-      if (!verification) {
-        console.error('WARNING: Metadata not found after update!');
-        return false;
-      }
+      console.log('[nbgrader] Metadata updated successfully');
     }
 
     return success;
@@ -199,6 +216,25 @@ export async function updateCellMetadata(
     console.error('Failed to update cell metadata:', error);
     return false;
   }
+}
+
+/**
+ * Sort object properties recursively to minimize SCM changes
+ * Matches Jupyter notebook/lab behavior
+ */
+function sortObjectPropertiesRecursively(obj: any): any {
+  if (Array.isArray(obj)) {
+    return obj.map(sortObjectPropertiesRecursively);
+  }
+  if (obj !== undefined && obj !== null && typeof obj === 'object' && Object.keys(obj).length > 0) {
+    return Object.keys(obj)
+      .sort()
+      .reduce<Record<string, any>>((sortedObj, prop) => {
+        sortedObj[prop] = sortObjectPropertiesRecursively(obj[prop]);
+        return sortedObj;
+      }, {});
+  }
+  return obj;
 }
 
 /**

@@ -9,6 +9,17 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import { NBGRADER_KEY } from './metadata/types';
 
+/**
+ * Check if we should use custom metadata wrapper
+ */
+function useCustomMetadata(): boolean {
+  const ipynbExt = vscode.extensions.getExtension('vscode.ipynb');
+  if (ipynbExt?.exports?.dropCustomMetadata !== undefined) {
+    return !ipynbExt.exports.dropCustomMetadata;
+  }
+  return true;
+}
+
 export function registerSaveHandler(context: vscode.ExtensionContext): void {
   // Listen for AFTER save events (onDid instead of onWill)
   const saveListener = vscode.workspace.onDidSaveNotebookDocument(async (notebook) => {
@@ -33,8 +44,20 @@ export function registerSaveHandler(context: vscode.ExtensionContext): void {
       // Inject nbgrader metadata from in-memory cells
       for (let i = 0; i < notebook.cellCount; i++) {
         const cell = notebook.cellAt(i);
-        const nbgraderMeta = cell.metadata?.[NBGRADER_KEY];
-        const tags = cell.metadata?.tags;
+        const cellMeta = cell.metadata as any;
+
+        // Get nbgrader metadata from the appropriate path
+        let nbgraderMeta = null;
+        if (useCustomMetadata()) {
+          nbgraderMeta = cellMeta?.custom?.metadata?.[NBGRADER_KEY];
+        } else {
+          nbgraderMeta = cellMeta?.metadata?.[NBGRADER_KEY];
+        }
+
+        // Fallback to direct path
+        if (!nbgraderMeta) {
+          nbgraderMeta = cellMeta?.[NBGRADER_KEY];
+        }
 
         if (!notebookJson.cells[i]) {
           console.error(`[nbgrader] Cell ${i} missing in saved file!`);
@@ -45,18 +68,11 @@ export function registerSaveHandler(context: vscode.ExtensionContext): void {
           notebookJson.cells[i].metadata = {};
         }
 
-        // Inject nbgrader metadata
+        // Inject nbgrader metadata at the ROOT level (for nbgrader CLI compatibility)
         if (nbgraderMeta) {
           notebookJson.cells[i].metadata[NBGRADER_KEY] = nbgraderMeta;
           modified = true;
           console.log(`[nbgrader] ✓ Injected nbgrader into cell ${i}:`, JSON.stringify(nbgraderMeta));
-        }
-
-        // Inject tags (backup storage)
-        if (tags && Array.isArray(tags) && tags.length > 0) {
-          notebookJson.cells[i].metadata.tags = tags;
-          modified = true;
-          console.log(`[nbgrader] ✓ Injected tags into cell ${i}:`, tags);
         }
       }
 

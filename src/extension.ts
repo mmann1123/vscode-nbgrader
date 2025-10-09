@@ -20,11 +20,39 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Register status bar provider
   // This shows cell type and points at the bottom of each cell
-  const statusBarProvider = vscode.notebooks.registerNotebookCellStatusBarItemProvider(
+  const statusBarProvider = new NbgraderStatusBarProvider();
+  const statusBarRegistration = vscode.notebooks.registerNotebookCellStatusBarItemProvider(
     'jupyter-notebook',
-    new NbgraderStatusBarProvider()
+    statusBarProvider
   );
-  context.subscriptions.push(statusBarProvider);
+  context.subscriptions.push(statusBarRegistration);
+
+  // Refresh status bar when notebooks are opened
+  context.subscriptions.push(
+    vscode.workspace.onDidOpenNotebookDocument((notebook) => {
+      if (notebook.notebookType === 'jupyter-notebook') {
+        console.log('[nbgrader] Notebook opened, refreshing status bars');
+        // Small delay to ensure metadata is loaded
+        setTimeout(() => statusBarProvider.refresh(), 100);
+      }
+    })
+  );
+
+  // Refresh status bar when notebook changes (e.g., cell metadata updated)
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeNotebookDocument((e) => {
+      if (e.notebook.notebookType === 'jupyter-notebook') {
+        // Only refresh if metadata changes occurred
+        if (e.cellChanges.length > 0) {
+          const hasMetadataChanges = e.cellChanges.some(change => change.metadata !== undefined);
+          if (hasMetadataChanges) {
+            console.log('[nbgrader] Metadata changed, refreshing status bars');
+            statusBarProvider.refresh();
+          }
+        }
+      }
+    })
+  );
 
   // Register commands
   const setCellTypeCmd = vscode.commands.registerCommand(
