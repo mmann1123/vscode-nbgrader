@@ -2,8 +2,6 @@
 
 Create and manage [nbgrader](https://nbgrader.readthedocs.io/) assignments directly in Visual Studio Code.
 
-
-
 ## Features
 
 - **Cell Toolbar Button**: Click the tag icon ($(tag)) in any notebook cell toolbar to set its nbgrader type
@@ -18,11 +16,8 @@ Create and manage [nbgrader](https://nbgrader.readthedocs.io/) assignments direc
 
 ## Usage
 
-<p>
-<iframe width="560" height="315" src="https://www.youtube.com/embed/UzEGw33DbiA" title="nbgrader demo" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
-</p>
+![nbgrader demo](static/nbgrader.gif)
 
-[Watch the demo on YouTube](https://youtu.be/UzEGw33DbiA)
 ### Setting Cell Types
 
 1. Open a Jupyter notebook in VS Code

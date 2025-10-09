@@ -2,7 +2,7 @@
   "name": "vscode-nbgrader",
   "displayName": "nbgrader for VS Code",
   "description": "Create and manage nbgrader assignments in VS Code",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "publisher": "mmann1123",
   "author": {
     "name": "Michael Mann",
