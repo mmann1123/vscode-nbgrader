@@ -4,7 +4,7 @@
 
 import * as vscode from 'vscode';
 import { NbgraderStatusBarProvider } from './ui/statusBar';
-import { setCellTypeCommand, clearCellMetadataCommand } from './ui/commands';
+import { setCellTypeCommand, clearCellMetadataCommand, validateNotebookCommand, fixNotebookCommand } from './ui/commands';
 import { registerSaveHandler } from './saveHandler';
 
 /**
@@ -66,6 +66,18 @@ export function activate(context: vscode.ExtensionContext) {
     clearCellMetadataCommand
   );
   context.subscriptions.push(clearMetadataCmd);
+
+  const validateCmd = vscode.commands.registerCommand(
+    'nbgrader.validateNotebook',
+    validateNotebookCommand
+  );
+  context.subscriptions.push(validateCmd);
+
+  const fixCmd = vscode.commands.registerCommand(
+    'nbgrader.fixNotebook',
+    fixNotebookCommand
+  );
+  context.subscriptions.push(fixCmd);
 
   // Debug command to check cell metadata
   const debugCmd = vscode.commands.registerCommand(

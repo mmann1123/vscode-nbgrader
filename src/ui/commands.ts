@@ -19,6 +19,10 @@ import {
   CELL_TYPE_LABELS
 } from '../metadata/types';
 import { validatePoints, parsePoints } from '../utils/validation';
+import { generateGradeId } from '../utils/uuid';
+
+// Shared output channel for validations
+const output = vscode.window.createOutputChannel('nbgrader');
 
 /**
  * Get the currently selected cell in the active notebook
@@ -166,5 +170,237 @@ export async function clearCellMetadataCommand(): Promise<void> {
     vscode.window.showInformationMessage('nbgrader metadata cleared');
   } else {
     vscode.window.showErrorMessage('Failed to clear metadata');
+  }
+}
+
+/**
+ * Command: Validate current notebook for nbgrader metadata schema
+ * - Ensures required fields exist (schema_version=3, grade, solution, locked)
+ * - Ensures grade_id present when any of grade/solution/locked is true
+ * - Ensures points present and >= 0 when grade is true
+ * - Ensures code-only types (solution, tests) are only used on code cells
+ * - Ensures grade_id values are unique and match allowed pattern
+ */
+export async function validateNotebookCommand(): Promise<void> {
+  const editor = vscode.window.activeNotebookEditor;
+  if (!editor) {
+    vscode.window.showWarningMessage('No active notebook to validate');
+    return;
+  }
+  if (editor.notebook.notebookType !== 'jupyter-notebook') {
+    vscode.window.showWarningMessage('Only Jupyter notebooks are supported for validation');
+    return;
+  }
+
+  const nb = editor.notebook;
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const idToCells = new Map<string, number[]>();
+
+  for (let i = 0; i < nb.cellCount; i++) {
+    const cell = nb.cellAt(i);
+    const isCode = cell.kind === vscode.NotebookCellKind.Code;
+    const data = getNbgraderData(cell);
+
+    if (!data) {
+      continue; // cells without nbgrader metadata are ok
+    }
+
+    // Required fields presence and values
+    const missing: string[] = [];
+    if (data.schema_version !== 3) missing.push('schema_version=3');
+    if (typeof data.grade !== 'boolean') missing.push('grade');
+    if (typeof data.solution !== 'boolean') missing.push('solution');
+    if (typeof data.locked !== 'boolean') missing.push('locked');
+    if (missing.length) {
+      errors.push(`[cell ${i}] Missing/invalid required fields: ${missing.join(', ')}`);
+    }
+
+    // grade_id required if any of grade/solution/locked is true
+    if ((data.grade || data.solution || data.locked)) {
+      if (!data.grade_id || typeof data.grade_id !== 'string') {
+        errors.push(`[cell ${i}] grade_id is required when any of grade/solution/locked is true`);
+      } else {
+        // pattern check per nbgrader schema
+        if (!/^[a-zA-Z0-9_\-]+$/.test(data.grade_id)) {
+          errors.push(`[cell ${i}] grade_id '${data.grade_id}' contains invalid characters`);
+        }
+        const arr = idToCells.get(data.grade_id) ?? [];
+        arr.push(i);
+        idToCells.set(data.grade_id, arr);
+      }
+    }
+
+    // points check when grade is true
+    if (data.grade) {
+      if (typeof data.points !== 'number' || Number.isNaN(data.points)) {
+        errors.push(`[cell ${i}] points must be a number when grade is true`);
+      } else if (data.points < 0) {
+        errors.push(`[cell ${i}] points must be non-negative (got ${data.points})`);
+      }
+    }
+
+    // type vs cell-kind constraints
+    const type = getCellType(data, isCode);
+    if ((type === 'solution' || type === 'tests') && !isCode) {
+      errors.push(`[cell ${i}] '${type}' is only valid on code cells`);
+    }
+  }
+
+  // duplicate grade_id detection
+  for (const [gid, cells] of idToCells) {
+    if (cells.length > 1) {
+      errors.push(`Duplicate grade_id '${gid}' used by cells ${cells.join(', ')}`);
+    }
+  }
+
+  // Emit results
+  output.appendLine('==== nbgrader validation ====' );
+  output.appendLine(`Notebook: ${nb.uri.fsPath}`);
+  output.appendLine(`Checked ${nb.cellCount} cells`);
+  if (errors.length === 0) {
+    output.appendLine('No errors found. ✔');
+    if (warnings.length) {
+      output.appendLine(`Warnings (${warnings.length}):`);
+      warnings.forEach(w => output.appendLine('  - ' + w));
+    }
+    output.show(true);
+    vscode.window.showInformationMessage('nbgrader validation passed');
+    return;
+  }
+
+  output.appendLine(`Errors (${errors.length}):`);
+  errors.forEach(e => output.appendLine('  - ' + e));
+  if (warnings.length) {
+    output.appendLine(`Warnings (${warnings.length}):`);
+    warnings.forEach(w => output.appendLine('  - ' + w));
+  }
+  output.show(true);
+  vscode.window.showErrorMessage(`nbgrader validation failed with ${errors.length} error(s). See the 'nbgrader' output for details.`);
+}
+
+/**
+ * Command: Fix current notebook nbgrader metadata
+ * Applies automatic repairs for common validation errors and persists changes.
+ */
+export async function fixNotebookCommand(): Promise<void> {
+  const editor = vscode.window.activeNotebookEditor;
+  if (!editor) {
+    vscode.window.showWarningMessage('No active notebook to fix');
+    return;
+  }
+  if (editor.notebook.notebookType !== 'jupyter-notebook') {
+    vscode.window.showWarningMessage('Only Jupyter notebooks are supported for fixing');
+    return;
+  }
+
+  const nb = editor.notebook;
+  output.appendLine('==== nbgrader fix ====' );
+  output.appendLine(`Notebook: ${nb.uri.fsPath}`);
+
+  // First pass: collect existing grade_ids to detect duplicates
+  const idOwner = new Map<string, number>();
+  for (let i = 0; i < nb.cellCount; i++) {
+    const cell = nb.cellAt(i);
+    const data = getNbgraderData(cell);
+    if (!data) continue;
+    const gid = data.grade_id;
+    if (!gid) continue;
+    if (!idOwner.has(gid)) {
+      idOwner.set(gid, i);
+    }
+  }
+
+  let fixes = 0;
+
+  for (let i = 0; i < nb.cellCount; i++) {
+    const cell = nb.cellAt(i);
+    const isCode = cell.kind === vscode.NotebookCellKind.Code;
+    const orig = getNbgraderData(cell);
+    if (!orig) continue;
+
+    const data: any = { ...orig };
+
+    // Ensure required fields
+    if (data.schema_version !== 3) data.schema_version = 3;
+    if (typeof data.grade !== 'boolean') data.grade = false;
+    if (typeof data.solution !== 'boolean') data.solution = false;
+    if (typeof data.locked !== 'boolean') data.locked = false;
+    if (typeof data.task !== 'boolean') data.task = false;
+
+    // Normalize impossible combinations and code-only types
+    const type = getCellType(data, isCode);
+    if (!isCode) {
+      // Convert code-only kinds to reasonable markdown equivalents
+      if (type === 'solution') {
+        // Convert to manually graded answer on markdown
+        data.grade = true; data.solution = true; data.locked = false; data.task = false;
+        if (typeof data.points !== 'number' || Number.isNaN(data.points)) data.points = 0;
+      } else if (type === 'tests') {
+        // Convert to manually graded answer by default
+        data.grade = true; data.solution = true; data.locked = false; data.task = false;
+        if (typeof data.points !== 'number' || Number.isNaN(data.points)) data.points = 0;
+      }
+    }
+
+    // Task normalization: task implies graded, not solution, unlocked
+    if (data.task) {
+      data.grade = true; data.solution = false; data.locked = false;
+    }
+
+    // Points only if graded
+    if (data.grade) {
+      if (typeof data.points !== 'number' || Number.isNaN(data.points) || data.points < 0) {
+        data.points = Math.max(0, Number(data.points) || 0);
+      }
+    } else {
+      if (data.points !== undefined) delete data.points;
+    }
+
+    // grade_id required if any of the three is true; must be valid and unique
+    const needsId = !!(data.grade || data.solution || data.locked);
+    if (!needsId) {
+      if (data.grade_id) delete data.grade_id;
+    } else {
+      let gid: string = data.grade_id;
+      if (!gid || typeof gid !== 'string') gid = generateGradeId();
+      // sanitize
+      if (!/^[a-zA-Z0-9_\-]+$/.test(gid)) {
+        gid = gid.replace(/[^a-zA-Z0-9_\-]/g, '_');
+        if (!gid) gid = generateGradeId();
+      }
+      // ensure uniqueness: allow first owner, change others
+      const owner = idOwner.get(gid);
+      if (owner !== undefined && owner !== i) {
+        // collision; generate a new unique id
+        let newId = generateGradeId();
+        while (idOwner.has(newId)) newId = generateGradeId();
+        gid = newId;
+      }
+      idOwner.set(gid, i);
+      data.grade_id = gid;
+    }
+
+    // Apply if changed
+    const changed = JSON.stringify(orig) !== JSON.stringify(data);
+    if (changed) {
+      const ok = await updateCellMetadata(cell, data);
+      if (ok) {
+        fixes++;
+        output.appendLine(`Fixed cell ${i}`);
+      } else {
+        output.appendLine(`Failed to update cell ${i}`);
+      }
+    }
+  }
+
+  if (fixes === 0) {
+    output.appendLine('No changes required. ✔');
+    output.show(true);
+    vscode.window.showInformationMessage('nbgrader: No fixes were needed');
+  } else {
+    output.appendLine(`Completed with ${fixes} cell(s) updated.`);
+    output.show(true);
+    vscode.window.showInformationMessage(`nbgrader: Fixed ${fixes} cell(s). Re-run validation.`);
   }
 }

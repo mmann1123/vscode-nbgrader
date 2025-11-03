@@ -113,6 +113,10 @@ export function createNbgraderMetadata(
       // Manually graded task
       return {
         ...base,
+        // nbgrader requires grade, solution, and locked to be present
+        grade: true,
+        solution: false,
+        locked: false,
         task: true,
         points
       };
@@ -140,6 +144,9 @@ export function createNbgraderMetadata(
       // Read-only cell
       return {
         ...base,
+        // Explicitly include all required fields
+        grade: false,
+        solution: false,
         locked: true
       };
 
