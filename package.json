@@ -2,7 +2,7 @@
   "name": "vscode-nbgrader",
   "displayName": "nbgrader for VS Code",
   "description": "Create and manage nbgrader assignments in VS Code",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "publisher": "mmann1123",
   "author": {
     "name": "Michael Mann",
@@ -56,16 +56,16 @@
         "title": "Debug: Show Cell Metadata",
         "category": "nbgrader"
       },
-        {
-          "command": "nbgrader.validateNotebook",
-          "title": "nbgrader: Validate Notebook",
-          "category": "nbgrader"
-        },
-        {
-          "command": "nbgrader.fixNotebook",
-          "title": "nbgrader: Fix Notebook Metadata",
-          "category": "nbgrader"
-        }
+      {
+        "command": "nbgrader.validateNotebook",
+        "title": "nbgrader: Validate Notebook",
+        "category": "nbgrader"
+      },
+      {
+        "command": "nbgrader.fixNotebook",
+        "title": "nbgrader: Fix Notebook Metadata",
+        "category": "nbgrader"
+      }
     ],
     "keybindings": [
       {
