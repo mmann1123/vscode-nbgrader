@@ -254,10 +254,21 @@ export async function validateNotebookCommand(): Promise<void> {
     }
   }
 
+  // Calculate total points
+  let totalPoints = 0;
+  for (let i = 0; i < nb.cellCount; i++) {
+    const cell = nb.cellAt(i);
+    const data = getNbgraderData(cell);
+    if (data && data.grade && typeof data.points === 'number' && !Number.isNaN(data.points)) {
+      totalPoints += data.points;
+    }
+  }
+
   // Emit results
   output.appendLine('==== nbgrader validation ====' );
   output.appendLine(`Notebook: ${nb.uri.fsPath}`);
   output.appendLine(`Checked ${nb.cellCount} cells`);
+  output.appendLine(`Total points: ${totalPoints}`);
   if (errors.length === 0) {
     output.appendLine('No errors found. ✔');
     if (warnings.length) {
@@ -265,7 +276,7 @@ export async function validateNotebookCommand(): Promise<void> {
       warnings.forEach(w => output.appendLine('  - ' + w));
     }
     output.show(true);
-    vscode.window.showInformationMessage('nbgrader validation passed');
+    vscode.window.showInformationMessage(`nbgrader validation passed. Total points: ${totalPoints}`);
     return;
   }
 
